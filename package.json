@@ -16,6 +16,7 @@
     "express": "^5.3.0",
     "express-validator": "^7.3.2",
     "jsonwebtoken": "^9.0.3",
+    "luxon": "^3.7.2",
     "mongoose": "^9.11.4"
   },
   "devDependencies": {

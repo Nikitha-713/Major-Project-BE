@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
 const therapistRoutes = require('./routes/therapistRoutes');
+const schedulingRoutes = require('./routes/schedulingRoutes');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -13,6 +14,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().t
 
 app.use('/api/auth', authRoutes);
 app.use('/api/therapists', therapistRoutes);
+app.use('/api/scheduling', schedulingRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
