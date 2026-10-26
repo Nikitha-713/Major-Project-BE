@@ -3,7 +3,9 @@ const mongoose = require('mongoose');
 const sessionSchema = new mongoose.Schema(
   {
     therapist: { type: mongoose.Schema.Types.ObjectId, ref: 'Therapist', required: true, index: true },
-    // Module 3 will add a `client` reference; until then the booking carries contact details.
+    // Linked after the booking is confirmed (see schedulingController). Older sessions may not have one.
+    client: { type: mongoose.Schema.Types.ObjectId, ref: 'Client', index: true },
+    // The booking also keeps a copy of the contact details as entered at the time.
     serviceId: { type: mongoose.Schema.Types.ObjectId },
     serviceTitle: { type: String, default: 'Therapy session' },
     durationMin: { type: Number, required: true },

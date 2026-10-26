@@ -6,6 +6,7 @@ const { OPTIONS, LIMITS } = require('../config/schedulingDefaults');
 const { validateAvailability } = require('../utils/validateAvailability');
 const { generateOpenSlots, buildCells, normalizeIso } = require('../services/schedulingService');
 const { notify } = require('../services/notificationService');
+const { findOrCreateClient } = require('../services/clientService');
 
 const optionsPayload = () => ({
   ...OPTIONS,
@@ -186,6 +187,15 @@ exports.bookSlot = async (req, res, next) => {
       throw err;
     }
 
+    // Attach the booking to a client record (creates one on the first booking by this email).
+    const { client, created } = await findOrCreateClient(therapist._id, {
+      name: session.clientName,
+      email: session.clientEmail,
+      phone: session.clientPhone,
+      timezone: session.clientTimezone,
+    });
+    await Session.updateOne({ _id: session._id }, { client: client._id });
+
     notify('booking.confirmed', { sessionId: session._id, therapist: therapist.name, clientEmail: session.clientEmail, startTime });
 
     // Only return what the client needs.
@@ -197,6 +207,9 @@ exports.bookSlot = async (req, res, next) => {
         durationMin,
         startTime,
         endTime,
+        // Only handed out when the client record is brand new. For returning clients the link
+        // stays private: knowing someone's email must never reveal their portal link.
+        portalToken: created ? client.portalToken : undefined,
       },
     });
   } catch (err) {

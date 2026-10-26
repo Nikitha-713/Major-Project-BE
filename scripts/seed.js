@@ -1,11 +1,16 @@
-// Usage: npm run seed   (wipes therapists, availability and sessions, then inserts demo data)
+// Usage: npm run seed   (wipes everything, then inserts demo data)
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
+const { DateTime } = require('luxon');
 const connectDB = require('../src/config/db');
 const Therapist = require('../src/models/Therapist');
 const Availability = require('../src/models/Availability');
 const Session = require('../src/models/Session');
+const Client = require('../src/models/Client');
+const ConsentRecord = require('../src/models/ConsentRecord');
+const consentTemplates = require('../src/config/consentTemplates');
+const { buildCells } = require('../src/services/schedulingService');
 
 const weekdays = (windows) => [1, 2, 3, 4, 5].map((dayOfWeek) => ({ dayOfWeek, windows }));
 
@@ -55,16 +60,74 @@ const demo = [
   },
 ];
 
+const makeSession = async (therapist, client, daysFromNow, hour, durationMin, status, title) => {
+  const start = DateTime.now().setZone('Asia/Kolkata').plus({ days: daysFromNow })
+    .set({ hour, minute: 0, second: 0, millisecond: 0 }).toUTC();
+  const startTime = start.toJSDate();
+  const endTime = start.plus({ minutes: durationMin }).toJSDate();
+  const occupiedUntil = start.plus({ minutes: durationMin + 10 }).toJSDate();
+  return Session.create({
+    therapist: therapist._id, client: client._id, serviceTitle: title, durationMin,
+    startTime, endTime, occupiedUntil, cells: buildCells(startTime, occupiedUntil), status,
+    clientName: client.name, clientEmail: client.email, clientPhone: client.phone, clientTimezone: client.timezone,
+  });
+};
+
 (async () => {
   await connectDB();
-  await Promise.all([Therapist.deleteMany({}), Availability.deleteMany({}), Session.deleteMany({})]);
-  await Session.syncIndexes(); // make sure the double-booking index exists
+  await Promise.all([
+    Therapist.deleteMany({}), Availability.deleteMany({}), Session.deleteMany({}),
+    Client.deleteMany({}), ConsentRecord.deleteMany({}),
+  ]);
+  await Promise.all([Session.syncIndexes(), Client.syncIndexes()]);
 
   const passwordHash = await bcrypt.hash('password123', 12);
+  const created = [];
   for (const d of demo) {
     const therapist = await Therapist.create({ ...d.profile, passwordHash });
     await Availability.create({ therapist: therapist._id, ...d.availability });
+    created.push(therapist);
   }
-  console.log('Seeded therapists and availability. Login with asha@example.com / password123');
+  const asha = created[0];
+
+  // Client 1: intake and consent done, two past sessions and one upcoming.
+  const priya = await Client.create({
+    therapist: asha._id, name: 'Priya Nair', email: 'priya@example.com', phone: '9876500001',
+    timezone: 'Asia/Kolkata', tags: ['anxiety', 'weekly'],
+    intake: {
+      completedAt: new Date(),
+      demographics: { dateOfBirth: new Date('1994-05-12'), gender: 'Female', occupation: 'Software engineer', city: 'Bengaluru' },
+      presentingConcern: 'Constant worry about work deadlines and trouble sleeping for the last six months.',
+      history: { previousTherapy: false, previousTherapyDetails: '', medications: '', medicalConditions: '' },
+      emergencyContact: { name: 'Anil Nair', phone: '9876500002', relationship: 'Father' },
+    },
+  });
+  const consent = consentTemplates.render(consentTemplates.CURRENT_VERSION, asha.name);
+  await ConsentRecord.create({
+    client: priya._id, therapist: asha._id, type: 'treatment_consent', version: consent.version,
+    title: consent.title, textSnapshot: consent.paragraphs.join('\n\n'), acceptedAt: new Date(), ipAddress: '127.0.0.1', userAgent: 'seed script',
+  });
+  await makeSession(asha, priya, -14, 10, 45, 'completed', 'Initial consultation');
+  await makeSession(asha, priya, -7, 10, 60, 'completed', 'Individual therapy');
+  await makeSession(asha, priya, 3, 15, 60, 'confirmed', 'Individual therapy');
+
+  // Client 2: booked but intake still pending (use this one to try the portal form).
+  const karthik = await Client.create({
+    therapist: asha._id, name: 'Karthik Gowda', email: 'karthik@example.com', phone: '9876500003',
+    timezone: 'Asia/Kolkata', tags: ['new'],
+  });
+  await Client.findById(karthik._id); // token already generated on create
+  await makeSession(asha, karthik, 5, 11, 45, 'confirmed', 'Initial consultation');
+
+  // Client 3: inactive, one past session.
+  const meera = await Client.create({
+    therapist: asha._id, name: 'Meera Joshi', email: 'meera@example.com', phone: '',
+    timezone: 'Asia/Kolkata', status: 'inactive', tags: ['burnout'],
+  });
+  await makeSession(asha, meera, -30, 16, 60, 'completed', 'Individual therapy');
+
+  console.log('Seeded therapists, availability, clients and sessions.');
+  console.log('Login: asha@example.com / password123');
+  console.log(`Try the intake form for Karthik (pending): http://localhost:5173/portal/${karthik.portalToken}`);
   await mongoose.disconnect();
 })();
