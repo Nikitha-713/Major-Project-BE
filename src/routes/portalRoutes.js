@@ -3,13 +3,13 @@ const { body } = require('express-validator');
 const { validate } = require('../middleware/errorHandler');
 const c = require('../controllers/portalController');
 const notes = require('../controllers/noteController');
-
+//const chatCtrl = require('../controllers/chatController');
 // No login: access is by the secret token in the URL.
 router.get('/:token', c.getPortal);
 
 // Shared session notes only (never private ones): see noteController.listSharedForPortal.
 router.get('/:token/notes', notes.listSharedForPortal);
-
+//router.get('/:token/chat/messages', resolvePortalClient /*your existing middleware*/, chatCtrl.getMessagesForClient);
 router.post(
   '/:token/intake',
   [
@@ -37,5 +37,5 @@ router.post(
   validate,
   c.submitIntake
 );
-
+//router.post('/:token/chat/messages', resolvePortalClient, chatCtrl.postMessageAsClient);
 module.exports = router;

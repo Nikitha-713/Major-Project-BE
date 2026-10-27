@@ -273,9 +273,32 @@ exports.bookSlot = async (req, res, next) => {
     }
 
     // 7b. Nothing to collect: confirmed immediately.
-    notify('booking.confirmed', { sessionId: session._id, therapist: therapist.name, clientEmail: session.clientEmail, startTime });
+    notify('booking.confirmed', {
+  sessionId: session._id,
+  therapistId: therapist._id,
+  clientId: client._id,
+  therapist: therapist.name,
+  clientEmail: session.clientEmail,
+  clientPhone: session.clientPhone,
+  startTime,
+});
+notify('booking.cancelled', {
+  sessionId: session._id,
+  therapistId: req.therapist._id,
+  clientId: session.client,
+  clientEmail: session.clientEmail,
+});
     res.status(201).json({ requiresPayment: false, session: summary });
   } catch (err) {
     next(err);
   }
+if (session.clientPackage) await restoreCredit(session.clientPackage);
+
+notify('booking.cancelled', {
+  sessionId: session._id,
+  therapistId: req.therapist._id,
+  clientId: session.client,
+  clientEmail: session.clientEmail,
+});
+res.json({ session }); 
 };

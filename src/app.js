@@ -9,7 +9,8 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const noteRoutes = require('./routes/noteRoutes');
 const { webhook } = require('./controllers/paymentController');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
-
+const chatRoutes = require('./routes/chatRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const app = express();
 app.set('trust proxy', 1); // so req.ip is the real client IP behind Render/Railway
 
@@ -29,7 +30,9 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/portal', portalRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/notes', noteRoutes);
-
+// ...after the existing app.use('/api/notes', noteRoutes); line:
+app.use('/api/chat', chatRoutes);
+app.use('/api/notifications', notificationRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
