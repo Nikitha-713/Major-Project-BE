@@ -1,6 +1,8 @@
 const Client = require('../models/Client');
 const Session = require('../models/Session');
 const ConsentRecord = require('../models/ConsentRecord');
+const Payment = require('../models/Payment');
+const ClientPackage = require('../models/ClientPackage');
 
 const SORTS = { name: 'name', lastSession: 'lastSession', nextSession: 'nextSession', status: 'status', createdAt: 'createdAt' };
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -114,15 +116,25 @@ exports.getClient = async (req, res, next) => {
       .lean();
     if (!client) return res.status(404).json({ message: 'Client not found' });
 
-    const [sessions, consents] = await Promise.all([
+    const [sessions, consents, payments, packages] = await Promise.all([
       Session.find({ client: client._id, therapist: req.therapist._id }).sort({ startTime: -1 }).limit(200).lean(),
       ConsentRecord.find({ client: client._id, therapist: req.therapist._id })
         .sort({ acceptedAt: -1 })
         .select('type version title acceptedAt ipAddress')
         .lean(),
+      Payment.find({ client: client._id, therapist: req.therapist._id }).sort({ createdAt: -1 }).limit(50)
+        .select('description amount platformFee status paidAt createdAt invoice.number').lean(),
+      ClientPackage.find({ client: client._id, therapist: req.therapist._id, status: { $ne: 'pending_payment' } }).sort({ createdAt: -1 }).lean(),
     ]);
 
-    res.json({ client: serialize(client), sessions, consents });
+    const now = new Date();
+    res.json({
+      client: serialize(client),
+      sessions,
+      consents,
+      payments: payments.map((p) => ({ ...p, invoiceNumber: p.invoice && p.invoice.number })),
+      packages: packages.map((p) => ({ ...p, status: p.status === 'active' && p.expiresAt < now ? 'expired' : p.status })),
+    });
   } catch (err) {
     next(err);
   }

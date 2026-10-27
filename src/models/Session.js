@@ -14,7 +14,23 @@ const sessionSchema = new mongoose.Schema(
     occupiedUntil: { type: Date, required: true }, // endTime + buffer
     // 5-minute cells covered by [startTime, occupiedUntil). Used only for the overlap guard below.
     cells: { type: [Number], required: true, select: false },
-    status: { type: String, enum: ['confirmed', 'cancelled', 'completed', 'no_show'], default: 'confirmed' },
+
+    // pending_payment = time is held while the client pays; expired = hold ran out unpaid.
+    status: {
+      type: String,
+      enum: ['pending_payment', 'confirmed', 'cancelled', 'completed', 'no_show', 'expired'],
+      default: 'confirmed',
+    },
+    // true while this session occupies its time (pending or confirmed). Removed on cancel/expiry.
+    holdsSlot: { type: Boolean },
+    holdExpiresAt: { type: Date },
+    paymentStatus: {
+      type: String,
+      enum: ['not_required', 'pending', 'paid', 'package', 'refunded'],
+      default: 'not_required',
+    },
+    clientPackage: { type: mongoose.Schema.Types.ObjectId, ref: 'ClientPackage' },
+
     clientName: { type: String, required: true, trim: true, maxlength: 80 },
     clientEmail: { type: String, required: true, lowercase: true, trim: true },
     clientPhone: { type: String, trim: true, maxlength: 20, default: '' },
@@ -24,13 +40,14 @@ const sessionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// DOUBLE-BOOKING GUARD. A unique multikey index means two confirmed sessions of the same
-// therapist can never share a 5-minute cell. If two clients click the same slot at the same
+// DOUBLE-BOOKING GUARD. A unique multikey index means two sessions that hold a slot can never
+// share a 5-minute cell of the same therapist. If two clients click the same slot at the same
 // instant, MongoDB lets exactly one insert succeed and rejects the other (error code 11000).
-// Cancelled sessions are excluded by the partial filter, so their time becomes bookable again.
+// Cancelled or expired sessions drop `holdsSlot`, so the partial filter excludes them and their
+// time becomes bookable again. (A held-but-unpaid session blocks the slot exactly like a paid one.)
 sessionSchema.index(
   { therapist: 1, cells: 1 },
-  { unique: true, partialFilterExpression: { status: 'confirmed' } }
+  { unique: true, partialFilterExpression: { holdsSlot: true } }
 );
 sessionSchema.index({ therapist: 1, startTime: 1 });
 

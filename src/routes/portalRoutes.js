@@ -2,9 +2,13 @@ const router = require('express').Router();
 const { body } = require('express-validator');
 const { validate } = require('../middleware/errorHandler');
 const c = require('../controllers/portalController');
+const notes = require('../controllers/noteController');
 
 // No login: access is by the secret token in the URL.
 router.get('/:token', c.getPortal);
+
+// Shared session notes only (never private ones): see noteController.listSharedForPortal.
+router.get('/:token/notes', notes.listSharedForPortal);
 
 router.post(
   '/:token/intake',

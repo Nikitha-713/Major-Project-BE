@@ -24,6 +24,15 @@ const therapistSchema = new mongoose.Schema(
     services: { type: [serviceSchema], default: [] },
     // Used by the Entitlement Service in Module 7. Stored as a key, never compared in routes.
     subscriptionTier: { type: String, default: 'free' },
+
+    // Billing settings (edited on the Payments page).
+    billing: {
+      collectAdvancePayment: { type: Boolean, default: false },
+      businessName: { type: String, trim: true, maxlength: 100, default: '' },
+      address: { type: String, trim: true, maxlength: 300, default: '' },
+      gstin: { type: String, trim: true, uppercase: true, maxlength: 15, default: '' },
+      gstRatePercent: { type: Number, min: 0, max: 28, default: 0 },
+    },
   },
   { timestamps: true }
 );
@@ -48,12 +57,24 @@ therapistSchema.methods.toPublicProfile = function () {
   };
 };
 
+therapistSchema.methods.toBillingJSON = function () {
+  const b = this.billing || {};
+  return {
+    collectAdvancePayment: Boolean(b.collectAdvancePayment),
+    businessName: b.businessName || '',
+    address: b.address || '',
+    gstin: b.gstin || '',
+    gstRatePercent: b.gstRatePercent || 0,
+  };
+};
+
 // Shape returned to the logged-in therapist themselves.
 therapistSchema.methods.toOwnerJSON = function () {
   return {
     id: this._id,
     email: this.email,
     subscriptionTier: this.subscriptionTier,
+    billing: this.toBillingJSON(),
     ...this.toPublicProfile(),
   };
 };

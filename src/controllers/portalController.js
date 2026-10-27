@@ -2,6 +2,10 @@ const Client = require('../models/Client');
 const Therapist = require('../models/Therapist');
 const Session = require('../models/Session');
 const ConsentRecord = require('../models/ConsentRecord');
+const Package = require('../models/Package');
+const ClientPackage = require('../models/ClientPackage');
+const Payment = require('../models/Payment');
+const { clientPackagesView } = require('./paymentController');
 const consentTemplates = require('../config/consentTemplates');
 
 const TOKEN_RE = /^[a-f0-9]{64}$/;
@@ -23,7 +27,20 @@ exports.getPortal = async (req, res, next) => {
       .select('startTime durationMin serviceTitle')
       .lean();
 
+    const [owned, forSale, payments] = await Promise.all([
+      ClientPackage.find({ client: client._id, status: { $in: ['active', 'exhausted', 'expired'] } }).sort({ createdAt: -1 }).lean(),
+      Package.find({ therapist: client.therapist, active: true }).sort({ sessions: 1 }).lean(),
+      Payment.find({ client: client._id, status: 'paid' }).sort({ paidAt: -1 }).limit(20)
+        .select('description amount paidAt invoice.number').lean(),
+    ]);
+
     res.json({
+      packages: clientPackagesView(owned),
+      packagesForSale: forSale.map((p) => ({
+        id: p._id, name: p.name, sessions: p.sessions, price: p.price, durationMin: p.durationMin,
+        validityDays: p.validityDays, perSessionRate: Math.round(p.price / p.sessions),
+      })),
+      payments: payments.map((p) => ({ id: p._id, description: p.description, amount: p.amount, paidAt: p.paidAt, invoiceNumber: p.invoice && p.invoice.number })),
       therapist: { name: therapist.name, slug: therapist.slug },
       client: { name: client.name },
       intakeCompleted: Boolean(client.intake && client.intake.completedAt),
