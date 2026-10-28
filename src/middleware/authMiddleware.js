@@ -1,22 +1,48 @@
 const jwt = require('jsonwebtoken');
 const Therapist = require('../models/Therapist');
 
-// Verifies the Bearer token and attaches the therapist to req.therapist.
-module.exports = async function protect(req, res, next) {
+/**
+ * Verifies the JWT and sets:
+ *   req.user        -> { id, role }   (used by chat, entitlements, analytics, clients)
+ *   req.userId / req.therapistId      (aliases, in case older code uses them)
+ *   req.therapist   -> therapist document without password (for therapist tokens)
+ *
+ * Works whatever field name your login used when signing the token
+ * (id, _id, therapistId, userId, clientId).
+ */
+module.exports = async (req, res, next) => {
   try {
     const header = req.headers.authorization || '';
-    const [scheme, token] = header.split(' ');
-    if (scheme !== 'Bearer' || !token) {
-      return res.status(401).json({ message: 'Authentication required' });
+    const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token) return res.status(401).json({ message: 'Not authorized, no token' });
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ message: 'Not authorized, invalid or expired token' });
     }
 
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    const therapist = await Therapist.findById(payload.id);
-    if (!therapist) return res.status(401).json({ message: 'Account no longer exists' });
+    const id = String(
+      decoded.id || decoded._id || decoded.therapistId || decoded.userId || decoded.clientId || ''
+    );
+    if (!id) return res.status(401).json({ message: 'Not authorized, bad token payload' });
 
-    req.therapist = therapist;
+    const role = decoded.role || (decoded.clientId ? 'client' : 'therapist');
+
+    req.user = { id, role };
+    req.userId = id;
+    if (role === 'therapist') req.therapistId = id;
+
+    // Load the therapist document for older code that expects req.therapist
+    if (role === 'therapist') {
+      const therapist = await Therapist.findById(id).select('-password -password_hash');
+      if (!therapist) return res.status(401).json({ message: 'Not authorized, user not found' });
+      req.therapist = therapist;
+    }
+
     next();
   } catch (err) {
-    return res.status(401).json({ message: 'Invalid or expired token' });
+    next(err);
   }
 };

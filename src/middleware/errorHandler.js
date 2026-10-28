@@ -1,28 +1,39 @@
 const { validationResult } = require('express-validator');
 
-// Use after express-validator chains: returns 400 with field-level messages.
-function validate(req, res, next) {
-  const result = validationResult(req);
-  if (result.isEmpty()) return next();
-  const errors = result.array().map((e) => ({ field: e.path, message: e.msg }));
-  return res.status(400).json({ message: errors[0].message, errors });
-}
+// Error handler: Express recognises it by the 4 parameters
+const errorHandler = (err, req, res, next) => {
+  console.error('ERROR:', err);
 
-function notFound(req, res) {
-  res.status(404).json({ message: `Route not found: ${req.method} ${req.originalUrl}` });
-}
-
-// eslint-disable-next-line no-unused-vars
-function errorHandler(err, req, res, next) {
-  if (err.code === 11000) {
-    const field = Object.keys(err.keyPattern || {})[0] || 'value';
-    return res.status(409).json({ message: `That ${field} is already in use` });
-  }
   if (err.name === 'ValidationError') {
-    return res.status(400).json({ message: err.message });
+    return res.status(400).json({
+      message: 'Validation failed',
+      errors: Object.values(err.errors).map((e) => e.message),
+    });
   }
-  console.error(err);
-  res.status(err.status || 500).json({ message: err.status ? err.message : 'Something went wrong' });
-}
+  if (err.code === 11000) {
+    return res.status(409).json({
+      message: `${Object.keys(err.keyValue || {})[0] || 'Value'} already exists`,
+    });
+  }
+  if (err.name === 'CastError') {
+    return res.status(400).json({ message: 'Invalid ID' });
+  }
 
-module.exports = { validate, notFound, errorHandler };
+  res.status(err.status || 500).json({ message: err.message || 'Server error' });
+};
+
+// express-validator result checker, used in authRoutes
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      message: errors.array()[0].msg,
+      errors: errors.array(),
+    });
+  }
+  next();
+};
+
+module.exports = errorHandler;                 // works with: const errorHandler = require(...)
+module.exports.errorHandler = errorHandler;    // works with: const { errorHandler } = require(...)
+module.exports.validate = validate;            // works with: const { validate } = require(...)

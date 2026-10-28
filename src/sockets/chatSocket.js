@@ -1,95 +1,63 @@
+const jwt = require('jsonwebtoken');
 const Message = require('../models/Message');
-const Client = require('../models/Client');
 
-// Room name: one thread per (therapistId, clientId) pair
-const roomFor = (therapistId, clientId) => `thread:${therapistId}:${clientId}`;
+// One room per therapist<->client pair
+const roomId = (therapistId, clientId) => `chat:${therapistId}:${clientId}`;
 
-async function authorizeThread(socket, therapistId, clientId) {
-  if (socket.user.role === 'therapist') {
-    return String(socket.user.id) === String(therapistId);
-  }
-  if (socket.user.role === 'client') {
-    return (
-      String(socket.user.id) === String(clientId) &&
-      String(socket.user.therapist) === String(therapistId)
-    );
-  }
-  return false;
-}
-
-module.exports = function registerChatHandlers(io, socket) {
-  socket.on('chat:join', async (payload, ack) => {
+module.exports = function initChat(io) {
+  // Authenticate every socket with the same JWT used by the REST API
+  io.use((socket, next) => {
     try {
-      const { therapistId, clientId } = payload || {};
-      if (!therapistId || !clientId) return ack?.({ ok: false, error: 'missing_ids' });
-      const allowed = await authorizeThread(socket, therapistId, clientId);
-      if (!allowed) return ack?.({ ok: false, error: 'forbidden' });
-
-      socket.join(roomFor(therapistId, clientId));
-      return ack?.({ ok: true });
-    } catch (err) {
-      return ack?.({ ok: false, error: 'server_error' });
+      const token = socket.handshake.auth?.token;
+      const p = jwt.verify(token, process.env.JWT_SECRET);
+      const id = String(p.id || p._id || p.therapistId || p.userId || p.clientId || '');
+      if (!id) throw new Error('bad payload');
+      socket.user = { id, role: p.role || (p.clientId ? 'client' : 'therapist') };
+      next();
+    } catch {
+      next(new Error('Unauthorized'));
     }
   });
 
-  socket.on('chat:send', async (payload, ack) => {
-    try {
-      const { therapistId, clientId, body } = payload || {};
-      if (!therapistId || !clientId || !body || !body.trim()) {
-        return ack?.({ ok: false, error: 'invalid_message' });
-      }
-      const allowed = await authorizeThread(socket, therapistId, clientId);
-      if (!allowed) return ack?.({ ok: false, error: 'forbidden' });
+  io.on('connection', (socket) => {
+    const { id, role } = socket.user;
 
-      const msg = await Message.create({
-        therapist: therapistId,
-        client: clientId,
-        senderRole: socket.user.role,
-        senderId: socket.user.id,
-        body: body.trim().slice(0, 4000),
-      });
+    // Participants come from the token, never from the client
+    const resolve = (otherId) =>
+      role === 'therapist'
+        ? { therapist: id, client: otherId }
+        : { therapist: otherId, client: id };
 
-      const json = msg.toObject();
-      io.to(roomFor(therapistId, clientId)).emit('chat:message', json);
-      return ack?.({ ok: true, message: json });
-    } catch (err) {
-      console.error('[chat:send]', err.message);
-      return ack?.({ ok: false, error: 'server_error' });
-    }
-  });
-
-  socket.on('chat:typing', (payload) => {
-    const { therapistId, clientId, isTyping } = payload || {};
-    if (!therapistId || !clientId) return;
-    socket.to(roomFor(therapistId, clientId)).emit('chat:typing', {
-      therapistId,
-      clientId,
-      fromRole: socket.user.role,
-      isTyping: Boolean(isTyping),
+    socket.on('chat:join', ({ otherId }) => {
+      const { therapist, client } = resolve(otherId);
+      socket.join(roomId(therapist, client));
     });
-  });
 
-  socket.on('chat:read', async (payload, ack) => {
-    try {
-      const { therapistId, clientId } = payload || {};
-      if (!therapistId || !clientId) return ack?.({ ok: false });
-      const allowed = await authorizeThread(socket, therapistId, clientId);
-      if (!allowed) return ack?.({ ok: false, error: 'forbidden' });
+    socket.on('chat:send', async ({ otherId, text }, ack) => {
+      try {
+        if (!text || !text.trim()) return;
+        const { therapist, client } = resolve(otherId);
+        const msg = await Message.create({ therapist, client, senderRole: role, text });
+        io.to(roomId(therapist, client)).emit('chat:message', msg);
+        ack?.({ ok: true });
+      } catch (e) {
+        ack?.({ ok: false, error: e.message });
+      }
+    });
 
-      const otherRole = socket.user.role === 'therapist' ? 'client' : 'therapist';
+    socket.on('chat:typing', ({ otherId, isTyping }) => {
+      const { therapist, client } = resolve(otherId);
+      socket.to(roomId(therapist, client)).emit('chat:typing', { role, isTyping });
+    });
+
+    socket.on('chat:read', async ({ otherId }) => {
+      const { therapist, client } = resolve(otherId);
+      const otherRole = role === 'therapist' ? 'client' : 'therapist';
       await Message.updateMany(
-        { therapist: therapistId, client: clientId, senderRole: otherRole, readAt: null },
-        { $set: { readAt: new Date() } }
+        { therapist, client, senderRole: otherRole, readAt: null },
+        { readAt: new Date() }
       );
-      io.to(roomFor(therapistId, clientId)).emit('chat:read', {
-        therapistId,
-        clientId,
-        byRole: socket.user.role,
-        at: new Date().toISOString(),
-      });
-      return ack?.({ ok: true });
-    } catch (err) {
-      return ack?.({ ok: false, error: 'server_error' });
-    }
+      socket.to(roomId(therapist, client)).emit('chat:read', { by: role });
+    });
   });
 };

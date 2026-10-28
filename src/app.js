@@ -1,39 +1,50 @@
 const express = require('express');
 const cors = require('cors');
+
+const errorHandler = require('./middleware/errorHandler');
+
 const authRoutes = require('./routes/authRoutes');
 const therapistRoutes = require('./routes/therapistRoutes');
-const schedulingRoutes = require('./routes/schedulingRoutes');
 const clientRoutes = require('./routes/clientRoutes');
-const portalRoutes = require('./routes/portalRoutes');
+const schedulingRoutes = require('./routes/schedulingRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const noteRoutes = require('./routes/noteRoutes');
-const { webhook } = require('./controllers/paymentController');
-const { notFound, errorHandler } = require('./middleware/errorHandler');
-const chatRoutes = require('./routes/chatRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
+const chatRoutes = require('./routes/chatRoutes');                   // Module 6
+const analyticsRoutes = require('./routes/analyticsRoutes');         // Module 7
+const entitlementRoutes = require('./routes/entitlementRoutes');     // Module 7
+
 const app = express();
-app.set('trust proxy', 1); // so req.ip is the real client IP behind Render/Railway
 
-// Razorpay's webhook signature is computed over the exact raw bytes, so this route must be
-// registered BEFORE express.json() (which would parse and replace the body).
-app.post('/api/payments/webhook', express.raw({ type: '*/*', limit: '1mb' }), webhook);
+app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
 
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
-app.use(express.json({ limit: '1mb' }));
+// Keep the raw body so the Razorpay webhook signature can be verified
+app.use(express.json({
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
+app.use((req, _res, next) => {
+  console.log(`${req.method} ${req.originalUrl}`);
+  next();
+});
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+// Friendly message for the root URL
+app.get('/', (_req, res) => res.send('Unfazed API is running'));
+// Health check
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/therapists', therapistRoutes);
-app.use('/api/scheduling', schedulingRoutes);
 app.use('/api/clients', clientRoutes);
-app.use('/api/portal', portalRoutes);
+app.use('/api/scheduling', schedulingRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/notes', noteRoutes);
-// ...after the existing app.use('/api/notes', noteRoutes); line:
 app.use('/api/chat', chatRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use(notFound);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/entitlements', entitlementRoutes);
+
+// 404 for unknown API routes
+app.use('/api', (_req, res) => res.status(404).json({ message: 'Route not found' }));
+
+// Must be last
 app.use(errorHandler);
 
 module.exports = app;
